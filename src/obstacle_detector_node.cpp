@@ -131,7 +131,7 @@ ObstacleDetectorNode::ObstacleDetectorNode() : veh_x(0.0), veh_y(0.0), veh_z(0.0
   
 
   sub_lidar_points = nh.subscribe(lidar_points_topic, 1, &ObstacleDetectorNode::lidarPointsCallback, this);
-  sub_odom_topic = nh.subscribe("/odomData", 1, &ObstacleDetectorNode::odomCallback, this);
+  sub_odom_topic = nh.subscribe("/udi_zpmc_loc_ns/ins_odom_huace", 1, &ObstacleDetectorNode::odomCallback, this);
   pub_cloud_ground = nh.advertise<sensor_msgs::PointCloud2>(cloud_ground_topic, 1);
   pub_cloud_clusters = nh.advertise<sensor_msgs::PointCloud2>(cloud_clusters_topic, 1);
   pub_marker_bboxes = nh.advertise<visualization_msgs::MarkerArray>(marker_bboxes_topic, 1);
