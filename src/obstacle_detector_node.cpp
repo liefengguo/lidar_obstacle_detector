@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <ros/ros.h>
 #include <ros/console.h>
 
@@ -25,6 +26,7 @@
 #include "lidar_obstacle_detector/tgs.hpp"
 #include "lidar_obstacle_detector/aos.hpp"
 #include "lidar_obstacle_detector/patchworkplusplus.hpp"
+#include "lidar_obstacle_detector/occlusion_evaluator.hpp"
 
 namespace lidar_obstacle_detector 
 {
@@ -46,6 +48,7 @@ class ObstacleDetectorNode
  public:
   ObstacleDetectorNode();
   virtual ~ObstacleDetectorNode() {};
+  const OcclusionEvaluation& latestOcclusionEvaluation() const { return last_occlusion_eval_; }
 
  private:
   Eigen::Affine3f main_transform_;
@@ -83,6 +86,10 @@ class ObstacleDetectorNode
   boost::shared_ptr<travel::ObjectCluster<pcl::PointXYZ>> travel_object_seg;
 
   boost::shared_ptr<PatchWorkpp<pcl::PointXYZ>> PatchworkppGroundSeg;
+
+  OcclusionEvaluatorConfig occlusion_config_;
+  OcclusionEvaluator occlusion_evaluator_;
+  OcclusionEvaluation last_occlusion_eval_;
 };
 
 // Dynamic parameter server callback function
@@ -128,6 +135,39 @@ ObstacleDetectorNode::ObstacleDetectorNode() : veh_x(0.0), veh_y(0.0), veh_z(0.0
   private_nh.param("jsk_bboxes_topic", marker_bboxes_topic, std::string("obstacle_detector/jsk_bboxes"));
   private_nh.param("autoware_objects_topic", objects_topic, std::string("/autoware_tracker/cluster/objects"));
   private_nh.param("bbox_target_frame", bbox_target_frame_, std::string("/PCD_DATA0"));
+  int occlusion_sector_count;
+  int occlusion_min_points;
+  double occlusion_mild_ratio;
+  double occlusion_moderate_ratio;
+  double occlusion_severe_ratio;
+  double occlusion_near_distance;
+  double occlusion_dynamic_window;
+  int occlusion_dynamic_transition;
+  private_nh.param("occlusion/sector_count", occlusion_sector_count, 36);
+  private_nh.param("occlusion/min_points_per_sector", occlusion_min_points, 15);
+  private_nh.param("occlusion/mild_ratio", occlusion_mild_ratio, 0.15);
+  private_nh.param("occlusion/moderate_ratio", occlusion_moderate_ratio, 0.4);
+  private_nh.param("occlusion/severe_ratio", occlusion_severe_ratio, 0.7);
+  private_nh.param("occlusion/near_distance_threshold", occlusion_near_distance, 12.0);
+  private_nh.param("occlusion/dynamic_time_window", occlusion_dynamic_window, 2.0);
+  private_nh.param("occlusion/dynamic_transition_threshold", occlusion_dynamic_transition, 3);
+
+  auto clamp_ratio = [](double value) -> float {
+    if (value < 0.0)
+      return 0.0f;
+    if (value > 1.0)
+      return 1.0f;
+    return static_cast<float>(value);
+  };
+  occlusion_config_.sector_count = static_cast<size_t>(std::max(1, occlusion_sector_count));
+  occlusion_config_.min_points_per_sector = static_cast<size_t>(std::max(1, occlusion_min_points));
+  occlusion_config_.mild_ratio = clamp_ratio(occlusion_mild_ratio);
+  occlusion_config_.moderate_ratio = clamp_ratio(occlusion_moderate_ratio);
+  occlusion_config_.severe_ratio = clamp_ratio(occlusion_severe_ratio);
+  occlusion_config_.near_distance_threshold = static_cast<float>(std::max(0.1, occlusion_near_distance));
+  occlusion_config_.dynamic_time_window = std::max(0.1, occlusion_dynamic_window);
+  occlusion_config_.dynamic_transition_threshold = static_cast<size_t>(std::max(1, occlusion_dynamic_transition));
+  occlusion_evaluator_ = OcclusionEvaluator(occlusion_config_);
   
 
   sub_lidar_points = nh.subscribe(lidar_points_topic, 1, &ObstacleDetectorNode::lidarPointsCallback, this);
@@ -193,6 +233,10 @@ void ObstacleDetectorNode::lidarPointsCallback(const sensor_msgs::PointCloud2::C
 
   // Downsampleing, ROI, and removing the car roof
   auto filtered_cloud = obstacle_detector->filterCloud(raw_cloud, VOXEL_GRID_SIZE, ROI_MIN_POINT, ROI_MAX_POINT);
+  last_occlusion_eval_ = occlusion_evaluator_.evaluate(filtered_cloud, pointcloud_header.stamp.toSec());
+  ROS_DEBUG_STREAM("Occlusion state: " << toString(last_occlusion_eval_.state)
+                   << " occluded_ratio=" << last_occlusion_eval_.occluded_sector_ratio
+                   << " near_ratio=" << last_occlusion_eval_.near_occlusion_ratio);
   
   std::pair<pcl::PointCloud<pcl::PointXYZ>::Ptr, pcl::PointCloud<pcl::PointXYZ>::Ptr> segmented_clouds_ptr;
   segmented_clouds_ptr.first = boost::make_shared<pcl::PointCloud<pcl::PointXYZ>>();

@@ -157,6 +157,7 @@ add_library(${PROJECT_NAME}
   include/${PROJECT_NAME}/utils.hpp
   include/${PROJECT_NAME}/patchworkplusplus.hpp
   include/${PROJECT_NAME}/measurement_package.h
+  include/${PROJECT_NAME}/occlusion_evaluator.hpp
 )
 
 ## Add cmake target dependencies of the library
